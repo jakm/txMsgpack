@@ -1,19 +1,18 @@
+from twisted.internet import defer
+from twisted.test import proto_helpers
+from twisted.trial import unittest
 
 import msgpack
-from txmsgpack.protocol import Msgpack
-from txmsgpack.protocol import MsgpackClientFactory
-from txmsgpack.protocol import MsgpackServerFactory
-from twisted.trial import unittest
-from twisted.test import proto_helpers
-from twisted.internet import defer
-from twisted.internet import protocol
-
 from txmsgpack.protocol import MSGTYPE_REQUEST
 from txmsgpack.protocol import MSGTYPE_RESPONSE
 from txmsgpack.protocol import MSGTYPE_NOTIFICATION
+from txmsgpack.server   import MsgpackRPCServer
 
 
-class Echo(Msgpack):
+class TestServer(MsgpackRPCServer):
+    def __init__(self):
+        self.storage = {}
+
     def remote_insert_key(self, value, msgid=None):
         value["new_key"]=1
         return self.remote_echo(value, msgid)
@@ -30,22 +29,21 @@ class Echo(Msgpack):
         df.callback(lhs + rhs)
         return df
 
-class EchoServerFactory(protocol.Factory):
-    numProtocols = 0
-    protocol = Echo
-    sendErrors = True
+    def remote_store(self, key, value):
+        self.storage[key] = value
 
-    def __init__(self, sendErrors=False):
-        EchoServerFactory.sendErrors = sendErrors
-
-    def buildProtocol(self, addr):
-        return EchoServerFactory.protocol(self, sendErrors=EchoServerFactory.sendErrors)
+    def remote_load(self, key):
+        return self.storage[key]
 
 
-class MsgpackTestCase(unittest.TestCase):
+class MsgpackRPCServerTestCase(unittest.TestCase):
+
     request_index=0
+
     def setUp(self):
-        factory = EchoServerFactory(True)
+        self.server = TestServer()
+        factory = self.server._buildFactory()
+
         self.proto = factory.buildProtocol(("127.0.0.1", 0))
         self.transport = proto_helpers.StringTransport()
         self.proto.makeConnection(self.transport)
@@ -53,12 +51,12 @@ class MsgpackTestCase(unittest.TestCase):
 
     def test_request_string(self):
         arg = "SIMON SAYS"
-        return self._test_request(value=arg, expected_result=arg, expected_error=None)
+        return self._test_request(method="echo", param=arg, expected_result=arg, expected_error=None)
 
     def test_request_dict(self):
         arg = {"A":1234}
         ret = {"A":1234, "new_key":1}
-        return self._test_request(method="insert_key", value=arg, expected_result=ret, expected_error=None)
+        return self._test_request(method="insert_key", param=arg, expected_result=ret, expected_error=None)
 
     def test_notify(self):
         arg = "NOTIFICATION"
@@ -67,7 +65,19 @@ class MsgpackTestCase(unittest.TestCase):
     def test_sum(self):
         args = (2,5)
         ret  = 7
-        return self._test_request(method="sum", value=args, expected_result=ret, expected_error=None)
+        return self._test_request(method="sum", param=args, expected_result=ret, expected_error=None)
+
+    def test_store_load(self):
+        key = 'foo'
+        value = 'bar'
+        args = (key, value)
+
+        self._test_request(method="store", params=args)
+
+        self.assertEqual(self.server.storage, {key: value})
+
+        self.transport.clear()
+        self._test_request(method="load", param=key, expected_result=value)
 
     def _test_notification(self, method="notify", value=""):
         message = (MSGTYPE_NOTIFICATION, method, (value,))
@@ -76,11 +86,16 @@ class MsgpackTestCase(unittest.TestCase):
         return_value = self.transport.value()
         self.assertEqual(return_value, "")
 
-    def _test_request(self, operation=MSGTYPE_REQUEST, method="echo", value="", expected_result="", expected_error=None):
-        index = MsgpackTestCase.request_index
-        MsgpackTestCase.request_index += 1
+    def _test_request(self, method, param=None, params=None, expected_result=None, expected_error=None):
+        index = MsgpackRPCServerTestCase.request_index
+        MsgpackRPCServerTestCase.request_index += 1
 
-        message         = (operation, index, method, (value,))
+        if params is not None:
+            args = params
+        else:
+            args = (param,)
+
+        message         = (MSGTYPE_REQUEST, index, method, args)
         packed_message  = self.packer.pack(message)
 
         response        = (MSGTYPE_RESPONSE, index, expected_error, expected_result)
@@ -92,9 +107,9 @@ class MsgpackTestCase(unittest.TestCase):
         self.assertEqual(return_value, packed_response)
 
         unpacked_response = msgpack.loads(return_value)
-        (msgType, msgid, methodName, params) = unpacked_response
+        (msgType, msgid, methodName, args) = unpacked_response
 
         self.assertEqual(msgType, MSGTYPE_RESPONSE)
         self.assertEqual(msgid, index)
         self.assertEqual(methodName, None)
-        self.assertEqual(params, expected_result)
+        self.assertEqual(args, expected_result)

@@ -25,19 +25,15 @@ import string
 import random
 import time
 
-from twisted.python import failure
 from twisted.internet import defer
-from twisted.internet import protocol
 from twisted.internet import reactor
-from twisted.internet import endpoints
-from txmsgpack.protocol import MsgpackClientFactory
+from txmsgpack.client import connect
 
 ITERATIONS=3000
 
 
 def create_client():
-    point = endpoints.TCP4ClientEndpoint(reactor, "localhost", 8007)
-    d = point.connect(MsgpackClientFactory())
+    d = connect("localhost", 8007)
     d.addCallback(test_client)
 
 def compare(result, item):
