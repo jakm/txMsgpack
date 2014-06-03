@@ -1,5 +1,6 @@
 
 import inspect
+import sys
 
 from txmsgpack.protocol import Msgpack, MsgpackServerFactory
 
@@ -31,6 +32,14 @@ class MsgpackRPCServer(object):
     def _createClosure(self, method):
         def protocol_method(proto, *args, **kwargs):
             return method(*args, **kwargs)
+
+        protocol_method.func_name = method.im_func.func_name
+        protocol_method.func_doc = getattr(method.im_func, 'func_doc', None)
+        protocol_method.func_dict = getattr(method.im_func, 'func_dict', {})
+        protocol_method.func_defaults = getattr(method.im_func, 'func_defaults', ())
+        callermodule = sys._getframe(3).f_globals.get('__name__', '?')
+        protocol_method.__module__ = getattr(method.im_func, 'module', callermodule)
+
         return protocol_method
 
     def serve(self, port, backlog=None, interface=None, reactor=None):
