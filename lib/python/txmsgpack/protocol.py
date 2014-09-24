@@ -271,7 +271,7 @@ class Msgpack(protocol.Protocol, policies.TimeoutMixin):
 
     def connectionMade(self):
         #print "connectionMade"
-        self.factory.numProtocols = self.factory.numProtocols+1 
+        self.factory.numProtocols = self.factory.numProtocols+1
         """
         self.transport.write(
             "Welcome! There are currently %d open connections.\n" %
@@ -280,6 +280,11 @@ class Msgpack(protocol.Protocol, policies.TimeoutMixin):
 
     def connectionLost(self, reason):
         #print "connectionLost"
+
+        while(len(self._outgoing_requests) > 0):
+            msgid, df = self._outgoing_requests.popitem()
+            df.errback(reason)
+
         self.factory.numProtocols = self.factory.numProtocols-1
 
     def closeConnection(self):
